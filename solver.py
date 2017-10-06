@@ -46,8 +46,23 @@ def determine_optimal_contract(policy, problem_specs):
     part_const = problem_specs[PART_CONST]
     # maximum contracts vector
     max_contract = problem_specs[MAX_CONTRACT]
+    max_cont = max_contract[0]
     # Get the policy map
     action_map = problem_specs[ACTION_MAP]
+    # Construct the objective and constraints
+    w0 = cvx.Variable()
+    w1 = cvx.Variable()
+    lmbda = 1
+    objective = cvx.Maximize( initial_prob[0]*(prob[0][0][action_map[policy[0]]]*(rewards[0][0]-w0) + prob[1][0][action_map[policy[0]]]*(rewards[0][1]-w1)) + initial_prob[1]*(prob[0][1][action_map[policy[1]]]*(rewards[1][0]-w0) + prob[1][1][action_map[policy[1]]]*(rewards[1][1]-w1)) )
+
+    constraints = [initial_prob[0]*(prob[0][0][action_map[policy[0]]]*(w0-costs[0,action_map[policy[0]],0]) + prob[1][0][action_map[policy[0]]]*(w1-costs[0,action_map[policy[0]],1]) - lmbda*(prob[0][0][action_map[policy[0]]]*(w0-costs[0,action_map[policy[0]],0])**2 + prob[1][0][action_map[policy[0]]]*(w1-costs[0,action_map[policy[0]],1])**2 - (prob[0][0][action_map[policy[0]]]*(w0-costs[0,action_map[policy[0]],0]) + prob[1][0][action_map[policy[0]]]*(w1-costs[0,action_map[policy[0]],1]))**2)) + initial_prob[1]*(prob[0][1][action_map[policy[1]]]*(w0-costs[1,action_map[policy[1]],0]) + prob[1][1][action_map[policy[1]]]*(w1-costs[1,action_map[policy[1]],1]) - lmbda* (prob[0][1][action_map[policy[1]]]*(w0-costs[1,action_map[policy[1]],0])**2 + prob[1][1][action_map[policy[1]]]*(w1-costs[1,action_map[policy[1]],1])**2 - (prob[0][1][action_map[policy[1]]]*(w0-costs[1,action_map[policy[1]],0]) + prob[1][1][action_map[policy[1]]]*(w1-costs[1,action_map[policy[1]],1]))**2)) > part_const]
+    problem = cvx.Problem(objective,constraints)
+    problem.solve()
+    print(problem.status)
+    print(problem.value)
+    return problem
+ 
+'''
     # Create the contract vector
     contracts = cvx.Variable(num_states)
     # Create the objective function
@@ -56,8 +71,7 @@ def determine_optimal_contract(policy, problem_specs):
     # Construct the constraints
     agent_util = [ prob[ :, i, action_map[policy[i]] ]*(contracts-costs[i,:]) for i in range(num_states) ]
     constraints = [ initial_prob*agent_util > part_const, contracts < max_contract ]
-    solution = cvx.Problem(objectice,constraints)
-    return solution
+'''
 
 def get_test_problem_specs():
     num_actions = 2
@@ -66,11 +80,13 @@ def get_test_problem_specs():
     problem_specs = {NUM_ACTIONS: num_actions, NUM_STATES: num_states} 
     policies = get_possible_policies(problem_specs)
     action_map = {action: actions.index(action) for action in actions}
-    trans_matrix = np.zeros( (num_states,num_states,len(policies)) )
-    for i in range(len(policies)):
+    trans_matrix = np.zeros( (num_states,num_states,num_actions) )
+    for i in range(num_actions):
         trans_matrix[:,:,i] = [[0.5,0.5],[0.3,0.7]]
     rewards = np.array([[5,5],[1,1]])
-    costs = np.array([ [2,2],[3,3] ])
+    costs = np.zeros( (num_states,num_actions,num_states) )
+    for i in range(num_actions):
+        costs[:][i][:] = np.array([ [2,2],[3,3] ])
     part_const = 2
     max_contract = np.array([3,3])
     initial_prob = np.array([0.5,0.5])
@@ -149,8 +165,10 @@ def main(argv):
         problem_specs = read_config_file(config_path)
     possible_policies = get_possible_policies(problem_specs)
     optimal_contracts = get_optimal_contracts_for_policies(possible_policies,problem_specs)
+    '''
     solution = determine_optimal_policy_and_contract(optimal_contracts)
     print_solution(solution)
+    '''
     if (not do_test):
         write_solution(solution,output_path)
 
