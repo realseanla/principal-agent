@@ -16,12 +16,30 @@ REWARDS = 'rewards'
 COSTS = 'costs'
 PART_CONST = 'part_const'
 MAX_CONTRACT = 'max_contract'
-ACTION_MAP = 'action_map'
+
+class ActionMatrix:
+    '''
+    Wrapper that holds a matrix that depends on the agent's actions
+    '''
+    def __init__(self,matrix,num_states):
+        self.matrix = matrix
+        self.num_states = num_states
+    def for_policy(self,policy):
+        '''
+        Returns the matrix given a specific policy
+        '''
+        num_states = self.num_states
+        policy_matrix = np.zeros( (num_states,num_states) )
+        matrix = self.matrix
+        for i in range(num_states):
+            for j in range(num_states):
+                policy_matrix[i,j] = matrix[i,j,policy[i]]
+        return policy_matrix
 
 def get_possible_policies(problem_specs):
     num_states = problem_specs[NUM_STATES]
     num_actions = problem_specs[NUM_ACTIONS]
-    action_list = ['action_%d' % (action) for action in range(num_actions)]
+    action_list = [action for action in range(num_actions)]
     # Cartesian product of the action_list with itself num_states times is equivalent to finding all possible policies
     policies = [policy for policy in itertools.product(action_list, repeat = num_states)]
     return policies 
@@ -36,65 +54,69 @@ def get_optimal_contracts_for_policies(policies, problem_specs):
 def determine_optimal_contract(policy, problem_specs):
     num_states = problem_specs[NUM_STATES]
     # trans_matrix is a num_states x num_states x num_actions size array
-    prob = problem_specs[TRANS_MATRIX]
+    trans_prob = problem_specs[TRANS_MATRIX].for_policy(policy)
     initial_prob = problem_specs[INITIAL_PROB]
     # rewards is a num_states x num_states size matrix
     rewards = problem_specs[REWARDS]
     # trans_matrix is a num_states x num_states x num_actions size array
-    costs = problem_specs[COSTS]
+    costs = problem_specs[COSTS].for_policy(policy)
     # agent participation constraint
     part_const = problem_specs[PART_CONST]
     # maximum contracts vector
     max_contract = problem_specs[MAX_CONTRACT]
     max_cont = max_contract[0]
-    # Get the policy map
-    action_map = problem_specs[ACTION_MAP]
-    # Construct the objective and constraints
-    w0 = cvx.Variable()
-    w1 = cvx.Variable()
-    lmbda = 1
-    objective = cvx.Maximize( initial_prob[0]*(prob[0][0][action_map[policy[0]]]*(rewards[0][0]-w0) + prob[1][0][action_map[policy[0]]]*(rewards[0][1]-w1)) + initial_prob[1]*(prob[0][1][action_map[policy[1]]]*(rewards[1][0]-w0) + prob[1][1][action_map[policy[1]]]*(rewards[1][1]-w1)) )
+    initial_prob = np.hstack((initial_prob,initial_prob))
 
-    constraints = [initial_prob[0]*(prob[0][0][action_map[policy[0]]]*(w0-costs[0,action_map[policy[0]],0]) + prob[1][0][action_map[policy[0]]]*(w1-costs[0,action_map[policy[0]],1]) - lmbda*(prob[0][0][action_map[policy[0]]]*(w0-costs[0,action_map[policy[0]],0])**2 + prob[1][0][action_map[policy[0]]]*(w1-costs[0,action_map[policy[0]],1])**2 - (prob[0][0][action_map[policy[0]]]*(w0-costs[0,action_map[policy[0]],0]) + prob[1][0][action_map[policy[0]]]*(w1-costs[0,action_map[policy[0]],1]))**2)) + initial_prob[1]*(prob[0][1][action_map[policy[1]]]*(w0-costs[1,action_map[policy[1]],0]) + prob[1][1][action_map[policy[1]]]*(w1-costs[1,action_map[policy[1]],1]) - lmbda* (prob[0][1][action_map[policy[1]]]*(w0-costs[1,action_map[policy[1]],0])**2 + prob[1][1][action_map[policy[1]]]*(w1-costs[1,action_map[policy[1]],1])**2 - (prob[0][1][action_map[policy[1]]]*(w0-costs[1,action_map[policy[1]],0]) + prob[1][1][action_map[policy[1]]]*(w1-costs[1,action_map[policy[1]],1]))**2)) > part_const]
+    ## Construct the objective
+    contracts = cvx.Variable(num_states,1)
+    contracts_matrix = contracts
+    # equivalent to repmat as in matlab
+    for i in range(num_states-1):
+        contracts_matrix = cvx.hstack(contracts_matrix,contracts) 
+    # contruct the principals reward objective function
+    principals_reward = rewards-contracts_matrix
+    principals_reward = cvx.mul_elemwise(trans_prob,principals_reward)
+    # at this step, we have the expected value of the principals reward among ending states
+    principals_reward = cvx.mul_elemwise(initial_prob,principals_reward)
+    # now, we have the expected value of the principal's reward among both initial and ending states
+    principals_reward = cvx.sum_entries(principals_reward)
+    # the objective is to maximize the principal's reward
+    objective = cvx.Maximize(principals_reward)
+
+    ## Construct the constraints
+    # First, we need to make sure the contracts we use don't surpass the maximum allowed contracts in value
+    constraints = [contracts < max_contract]
+    # Next, construct the agent's participation constraint
+
     problem = cvx.Problem(objective,constraints)
     problem.solve()
-    print(problem.status)
-    print(problem.value)
     return problem
  
-'''
-    # Create the contract vector
-    contracts = cvx.Variable(num_states)
-    # Create the objective function
-    principal_util = [ prob[ :, i, action_map[policy[i]] ]*(rewards[i,:]-contracts) for i in range(num_states) ]
-    objective = cvx.Maximize(initial_prob*principal_util) 
-    # Construct the constraints
-    agent_util = [ prob[ :, i, action_map[policy[i]] ]*(contracts-costs[i,:]) for i in range(num_states) ]
-    constraints = [ initial_prob*agent_util > part_const, contracts < max_contract ]
-'''
-
 def get_test_problem_specs():
     num_actions = 2
     actions = [ "action_%d" % (action) for action in range(num_actions) ]
     num_states = 2
     problem_specs = {NUM_ACTIONS: num_actions, NUM_STATES: num_states} 
     policies = get_possible_policies(problem_specs)
-    action_map = {action: actions.index(action) for action in actions}
     trans_matrix = np.zeros( (num_states,num_states,num_actions) )
     for i in range(num_actions):
         trans_matrix[:,:,i] = [[0.5,0.5],[0.3,0.7]]
+    trans_matrix = ActionMatrix(trans_matrix,num_states)
+
     rewards = np.array([[5,5],[1,1]])
     costs = np.zeros( (num_states,num_actions,num_states) )
     for i in range(num_actions):
-        costs[:][i][:] = np.array([ [2,2],[3,3] ])
+        costs[:,:,i] = np.array([ [2,2],[3,3] ])
+    costs = ActionMatrix(costs,num_states) 
+
     part_const = 2
     max_contract = np.array([3,3])
     initial_prob = np.array([0.5,0.5])
+    initial_prob.shape = (2,1)
 
     problem_specs = {
         NUM_ACTIONS: num_actions,
         NUM_STATES: num_states,
-        ACTION_MAP: action_map, 
         TRANS_MATRIX: trans_matrix,
         REWARDS: rewards,
         COSTS: costs,
