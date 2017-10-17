@@ -87,6 +87,11 @@ def determine_optimal_contract(policy, problem_specs):
     # First, we need to make sure the contracts we use don't surpass the maximum allowed contracts in value
     constraints = [contracts < max_contract]
     # Next, construct the agent's participation constraint
+    agents_reward = contracts_matrix - costs
+    agents_reward = cvx.mul_elemwise(trans_prob,agents_reward)
+    agents_reward = cvx.mul_elemwise(initial_prob,agents_reward)
+    agents_reward = cvx.sum_entries(agents_reward)
+    constraints.append(agents_reward > part_const)
 
     problem = cvx.Problem(objective,constraints)
     problem.solve()
